@@ -74,7 +74,7 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
     } catch {
       case ex: Throwable => logError(ex.getMessage + "\r\n" + ex.getStackTraceString)
     }
-
+    
     try {
       sql("create cube incrementalLoadTable dimensions(deviceInformationId integer, channelsId string, ROMSize string, purchasedate string, mobile struct<imei string, imsi string>, MAC array<string>, locationinfo array<struct<ActiveAreaId integer, ActiveCountry string, ActiveProvince string, Activecity string, ActiveDistrict string, ActiveStreet string>>, proddate struct<productionDate string,activeDeactivedate array<string>>) measures(gamePointId numeric,contractNumber numeric) OPTIONS (PARTITIONER [CLASS = 'org.carbondata.integration.spark.partition.api.impl.SampleDataPartitionerImpl' ,COLUMNS= (deviceInformationId) , PARTITION_COUNT=1] )")
     } catch {
@@ -91,9 +91,9 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
   }
 
   def buildCarbonLoadModel(relation: CarbonRelation,
-                           filePath:String,
-                           dimensionFilePath: String,
-                           header: String): CarbonLoadModel = {
+          filePath:String,
+          dimensionFilePath: String,
+          header: String): CarbonLoadModel = {
     val carbonLoadModel = new CarbonLoadModel
     carbonLoadModel.setTableName(relation.cubeMeta.carbonTableIdentifier.getDatabaseName)
     carbonLoadModel.setDatabaseName(relation.cubeMeta.carbonTableIdentifier.getTableName)
@@ -118,7 +118,7 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
     buildTable
     buildRelation
   }
-
+  
   def checkDictionary(relation: CarbonRelation, columnName: String, value: String){
     val table = relation.cubeMeta.carbonTable
     val dimension = table.getDimensionByName(table.getFactTableName, columnName)
@@ -134,7 +134,7 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
 
     var carbonLoadModel = buildCarbonLoadModel(sampleRelation, filePath, null, null)
     GlobalDictionaryUtil.generateGlobalDictionary(CarbonHiveContext, carbonLoadModel, sampleRelation.cubeMeta.dataPath)
-
+    
     // test for dimension table
     // TODO - Need to fill and send the dimension table data as per new DimensionRelation in CarbonDataLoadModel
     // carbonLoadModel = buildCarbonLoadModel(dimSampleRelation, filePath, dimFilePath, null)
@@ -153,7 +153,7 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
     var carbonLoadModel = buildCarbonLoadModel(incrementalLoadTableRelation, complexfilePath1, null, header)
     GlobalDictionaryUtil.generateGlobalDictionary(CarbonHiveContext, carbonLoadModel, sampleRelation.cubeMeta.dataPath)
     checkDictionary(incrementalLoadTableRelation, "deviceInformationId" ,"100010")
-
+    
     // load 2
     carbonLoadModel = buildCarbonLoadModel(incrementalLoadTableRelation, complexfilePath2, null, header)
     GlobalDictionaryUtil.generateGlobalDictionary(CarbonHiveContext, carbonLoadModel, sampleRelation.cubeMeta.dataPath)
