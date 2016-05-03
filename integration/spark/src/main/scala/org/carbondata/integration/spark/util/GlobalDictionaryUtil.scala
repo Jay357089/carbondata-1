@@ -26,7 +26,7 @@ import scala.language.implicitConversions
 import scala.util.control.Breaks.{break, breakable}
 
 import org.apache.commons.lang3.{ArrayUtils, StringUtils}
-import org.apache.spark.Logging
+import org.apache.spark.{Logging, SparkContext}
 import org.apache.spark.rdd.RDD.rddToPairRDDFunctions
 import org.apache.spark.sql.{DataFrame, SQLContext}
 
@@ -381,6 +381,82 @@ object GlobalDictionaryUtil extends Logging {
   }
 
   /**
+   *  generate global dict for external column dictionary file
+   * @param sparkContext
+   * @param colDictFilePath
+   * @param table
+   * @param dimensions
+   * @param hdfsLocation
+   * @param dictFolderPath
+   */
+  private def generateDictFromColumnFile(carbonLoadModel: CarbonLoadModel,
+                                         sparkContext: SparkContext,
+                                         colDictFilePath: String,
+                                         table: CarbonTableIdentifier,
+                                         dimensions: Array[CarbonDimension],
+                                         hdfsLocation: String,
+                                         dictFolderPath: String): Array[String] = {
+    val dictGenColumns = new ArrayBuffer[String]
+    val colFileMapArray = colDictFilePath.split(",")
+    val dataBaseName = table.getDatabaseName
+    val tableName = table.getTableName
+    for (colPathMap <- colFileMapArray) {
+      val colPathMapTrim = colPathMap.trim
+      val colName = colPathMapTrim.split(":")(0)
+      // judge whether the column is exists
+      if (!dimensions.exists(_.getColName.equalsIgnoreCase(colName))) {
+        logError(s"No column $colName exists in $dataBaseName.$tableName")
+        throw new IllegalArgumentException
+      }
+      // foreach the dimension and get the matching column to generate dict
+      dimensions.foreach(x =>
+        if (x.getColName.equalsIgnoreCase(colName)) {
+          val colPath = colPathMapTrim.substring(colName.length + 1)
+          if (colPath != null) {
+            val dictModel = createDictionaryLoadModel(carbonLoadModel, table, Array(x),
+              hdfsLocation, dictFolderPath)
+            // write new dict delta to the file
+            val mapIdWithSet = new HashMap[String, HashSet[String]]
+            val dictSetArray = new Array[HashSet[String]](dictModel.primDimensions.length)
+            for (i <- 0 until dictModel.primDimensions.length) {
+              dictSetArray(i) = new HashSet[String]
+              mapIdWithSet.put(dictModel.primDimensions(i).getColumnId, dictSetArray(i))
+            }
+            // use parser to generate new dict value
+            val dimensionParser = generateParserForDimension(
+              Some(x),
+              createDataFormat(dictModel.delimiters),
+              mapIdWithSet).get
+            val newColDic = sparkContext.textFile(colPath).flatMap(_.split(",")).collect.toSet
+            newColDic.map(dimensionParser.parseString(_))
+            var dictionary: Dictionary = null
+            var newDictinctValues = new ArrayBuffer[String]
+            // filter old dict value
+            for (i <- 0 until dictSetArray.length) {
+              if (dictModel.dictFileExists(i)) {
+                dictionary = CarbonLoaderUtil.getDictionary(dictModel.table,
+                  dictModel.primDimensions(i).getColumnId,
+                  dictModel.hdfsLocation)
+              }
+              newDictinctValues = GlobalDictionaryUtil.generateNewDistinctValueList(
+                dictSetArray(i).toArray, dictionary, dictModel, i)
+              // write final dict value and sort index
+              writeGlobalDictionaryToFile(dictModel, i, newDictinctValues.toIterator)
+              writeGlobalDictionaryColumnSortInfo(dictModel, i, dictionary, newDictinctValues)
+            }
+            dictGenColumns += colName
+          }
+          else {
+            logError(s"column file path of $colName in $dataBaseName.$tableName " +
+              s"should not be empty")
+            throw new IllegalArgumentException
+          }
+        })
+    }
+    dictGenColumns.toArray
+  }
+
+  /**
    * generate global dictionary with SQLContext and CarbonLoadModel
    *
    * @param sqlContext
@@ -392,25 +468,49 @@ object GlobalDictionaryUtil extends Logging {
     try {
       val table = new CarbonTableIdentifier(carbonLoadModel.getDatabaseName,
         carbonLoadModel.getTableName)
-
+      // get carbon dimension list
+      val carbonTable = carbonLoadModel.getCarbonDataLoadSchema.getCarbonTable
+      val dimensions = carbonTable.getDimensionByTableName(carbonTable.getFactTableName)
+        .asScala.toArray
       // create dictionary folder if not exists
       val carbonTablePath = CarbonStorePath.getCarbonTablePath(hdfsLocation, table)
       val dictfolderPath = carbonTablePath.getMetadataDirectoryPath
       val created = CarbonUtil.checkAndCreateFolder(dictfolderPath)
       if (!created) {
         logError("Dictionary Folder creation status :: " + created)
-        throw new IOException("Failed to created dictionary folder");
+        throw new IOException("Failed to created dictionary folder")
       }
       // load data by using dataSource com.databricks.spark.csv
       // need new SQLContext to use spark-csv
       var df = loadDataFrame(sqlContext, carbonLoadModel)
-      // columns which need to generate global dictionary file
-      val carbonTable = carbonLoadModel.getCarbonDataLoadSchema.getCarbonTable
-      val dimensions = carbonTable.getDimensionByTableName(
-        carbonTable.getFactTableName).asScala.toArray
       val headers = if (StringUtils.isEmpty(carbonLoadModel.getCsvHeader)) df.columns
       else carbonLoadModel.getCsvHeader.split("" + CSVWriter.DEFAULT_SEPARATOR)
-      val (requireDimension, requireColumnNames) = pruneDimensions(dimensions, headers, df.columns)
+      val headersBuffer = headers.toBuffer
+      // generate global dict from external column dict file
+      val colDictFilePath = carbonLoadModel.getColDictFilePath
+      if (colDictFilePath != null) {
+        val extColumns = generateDictFromColumnFile(carbonLoadModel, sqlContext.sparkContext,
+          colDictFilePath, table, dimensions, hdfsLocation, dictfolderPath)
+        // no use the data from fact table to generate global dict
+        val dfColArray = ArrayBuffer[String]()
+        val headColArray = ArrayBuffer[String]()
+        // foreach and drop the columns have been used
+        extColumns.foreach(extCol =>
+          breakable(
+          for (i <- 0 until headers.length) {
+            if (extCol.equalsIgnoreCase(headers(i))) {
+              dfColArray += df.columns(i)
+              headColArray += headers(i)
+              break
+            }
+          })
+        )
+        dfColArray.foreach(x => df = df.drop(x))
+        headersBuffer --= headColArray
+      }
+      // use fact file to generate global dict
+      val (requireDimension, requireColumnNames) = pruneDimensions(dimensions,
+        headersBuffer.toArray, df.columns)
       if (requireDimension.size >= 1) {
         // select column to push down pruning
         df = df.select(requireColumnNames.head, requireColumnNames.tail: _*)
@@ -424,7 +524,7 @@ object GlobalDictionaryUtil extends Logging {
         // check result status
         checkStatus(statusList)
       } else {
-        logInfo("have no column need to generate global dictionary")
+        logInfo("have no column need to generate global dictionary in Fact file")
       }
       // generate global dict from dimension file
       if (carbonLoadModel.getDimFolderPath != null) {
@@ -458,9 +558,8 @@ object GlobalDictionaryUtil extends Logging {
     }
   }
 
-  def generateNewDistinctValueList(valuesBuffer: ArrayBuffer[String], dictionary: Dictionary,
+  def generateNewDistinctValueList(values: Array[String], dictionary: Dictionary,
     model: DictionaryLoadModel, columnIndex: Int) : ArrayBuffer[String] = {
-    val values = valuesBuffer.toArray
     val newDistinctValueList = new ArrayBuffer[String]
     java.util.Arrays.sort(values, Ordering[String])
 

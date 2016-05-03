@@ -227,7 +227,7 @@ class CarbonGlobalDictionaryGenerateRDD(
         }
         val t3 = System.currentTimeMillis
         val newDictinctValues = GlobalDictionaryUtil.generateNewDistinctValueList(
-          valuesBuffer, dictionary, model, split.index
+          valuesBuffer.toArray, dictionary, model, split.index
         )
         val t4 = System.currentTimeMillis
         // write to file
@@ -238,7 +238,7 @@ class CarbonGlobalDictionaryGenerateRDD(
           val t5 = System.currentTimeMillis
           GlobalDictionaryUtil.writeGlobalDictionaryColumnSortInfo(model, split.index, dictionary,
             newDictinctValues
-          );
+          )
           val t6 = System.currentTimeMillis
 
           LOGGER.info(CarbonSparkInterFaceLogEvent.UNIBI_CARBON_SPARK_INTERFACE_MSG,
