@@ -402,7 +402,13 @@ object GlobalDictionaryUtil extends Logging {
     val tableName = table.getTableName
     for (colPathMap <- colFileMapArray) {
       val colPathMapTrim = colPathMap.trim
-      val colName = colPathMapTrim.split(":")(0)
+      val splitMap = colPathMapTrim.split(":")
+      if (splitMap.length == 1) {
+        logError("the format of external column dictionary should be " +
+          "columnName:columnPath, please check")
+        throw new IllegalArgumentException
+      }
+      val colName = splitMap(0)
       // judge whether the column is exists
       if (!dimensions.exists(_.getColName.equalsIgnoreCase(colName))) {
         logError(s"No column $colName exists in $dataBaseName.$tableName")
