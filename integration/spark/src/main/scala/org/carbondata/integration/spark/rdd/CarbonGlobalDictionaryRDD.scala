@@ -17,10 +17,14 @@
 
 package org.carbondata.integration.spark.rdd
 
+import java.io.InputStreamReader
+import java.nio.charset.Charset
 import java.util.regex.Pattern
 
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
-import scala.io.Source
+
+import org.carbondata.core.datastorage.store.impl.FileFactory
+import org.carbondata.integration.spark.partition.reader.{CSVParser, CSVReader}
 
 import org.apache.commons.lang3.{ArrayUtils, StringUtils}
 import org.apache.spark._
@@ -31,7 +35,7 @@ import org.carbondata.common.logging.LogServiceFactory
 import org.carbondata.core.carbon.CarbonTableIdentifier
 import org.carbondata.core.carbon.metadata.schema.table.column.CarbonDimension
 import org.carbondata.core.constants.CarbonCommonConstants
-import org.carbondata.integration.spark.load.{CarbonLoadModel, CarbonLoaderUtil}
+import org.carbondata.integration.spark.load.{CarbonLoaderUtil, CarbonLoadModel}
 import org.carbondata.integration.spark.util.{CarbonSparkInterFaceLogEvent, GlobalDictionaryUtil}
 import org.carbondata.integration.spark.util.GlobalDictionaryUtil._
 
@@ -323,7 +327,8 @@ class CarbonColumnDictGenerateRDD(carbonLoadModel: CarbonLoadModel,
         val dimLen = getPrimDimensionWithDict(dimensions(i-1)).length
         primColStarIndex += dimLen
       }
-      result(i) = new CarbonColumnDictPatition(i, dimensions(i), dictColumnPaths(i), primColStarIndex)
+      result(i) = new CarbonColumnDictPatition(i, dimensions(i), dictColumnPaths(i),
+        primColStarIndex)
     }
     result
   }
@@ -331,11 +336,15 @@ class CarbonColumnDictGenerateRDD(carbonLoadModel: CarbonLoadModel,
   override def compute(split: Partition, context: TaskContext): Iterator[(Int, Array[String])] = {
     val theSplit = split.asInstanceOf[CarbonColumnDictPatition]
     // read the column dict data
-    val colDict = Source.fromFile(theSplit.columnPath).getLines.toArray.flatMap(x => x.split(","))
+    val inputStream = FileFactory.getDataInputStream(theSplit.columnPath,
+      FileFactory.getFileType(theSplit.columnPath))
+    val csvReader = new CSVReader(new InputStreamReader(inputStream, Charset.defaultCharset),
+      CSVReader.DEFAULT_SKIP_LINES, new CSVParser())
+    // read the column data to list
+    val colDict = csvReader.readAll().iterator()
     val distinctValues = new ArrayBuffer[(Int, HashSet[String])]
     val dictModel = createDictionaryLoadModel(carbonLoadModel, table, Array(theSplit.colDimension),
       hdfsLocation, dictFolderPath)
-    // write new dict delta to the file
     val mapIdWithSet = new HashMap[String, HashSet[String]]
     val columnValues = new Array[HashSet[String]](dictModel.primDimensions.length)
     for (i <- 0 until dictModel.primDimensions.length) {
@@ -348,8 +357,10 @@ class CarbonColumnDictGenerateRDD(carbonLoadModel: CarbonLoadModel,
       Some(theSplit.colDimension),
       createDataFormat(dictModel.delimiters),
       mapIdWithSet).get
-    colDict.map(dimensionParser.parseString(_))
-
+    // parse the column data
+    while (colDict.hasNext) {
+      dimensionParser.parseString(colDict.next()(0))
+    }
     distinctValues.map { iter =>
       val valueList = iter._2.toArray
       java.util.Arrays.sort(valueList, Ordering[String])

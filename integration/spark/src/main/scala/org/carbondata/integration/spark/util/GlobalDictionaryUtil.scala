@@ -57,12 +57,15 @@ object GlobalDictionaryUtil extends Logging {
 
   /**
    * find columns which need to generate global dictionary.
-   * @param dimensions dimension list of schema
-   * @param columns column list of csv file
-   * @return: java.lang.String[]
+   * @param dimensions
+   * @param headers
+   * @param columns
+   * @param extDimensions
+   * @return
    */
   def pruneDimensions(dimensions: Array[CarbonDimension], headers: Array[String],
-                      columns: Array[String], extDimensions: Option[Array[CarbonDimension]] = None) = {
+                      columns: Array[String], extDimensions: Option[Array[CarbonDimension]]
+  = None): (Array[CarbonDimension], Array[String]) = {
     val dimensionBuffer = new ArrayBuffer[CarbonDimension]
     val columnNameBuffer = new ArrayBuffer[String]
     val dimensionsWithDict = dimensions.filter(hasEncoding(_, Encoding.DICTIONARY,
@@ -72,8 +75,8 @@ object GlobalDictionaryUtil extends Logging {
       breakable {
         for (i <- 0 until headers.length) {
           dimName = dim.getColName
-          if (dimName.equalsIgnoreCase(headers(i)) && (extDimensions.isEmpty || !extDimensions.get.exists
-            (_.getColName.equalsIgnoreCase(dimName)))) {
+          if (dimName.equalsIgnoreCase(headers(i)) && (extDimensions.isEmpty ||
+            !extDimensions.get.exists(_.getColName.equalsIgnoreCase(dimName)))) {
             dimensionBuffer += dim
             columnNameBuffer += columns(i)
             break
@@ -86,6 +89,10 @@ object GlobalDictionaryUtil extends Logging {
 
   /**
    *  use this method to judge whether CarbonDimension use some encoding or not
+   * @param dimension
+   * @param encoding
+   * @param excludeEncoding
+   * @return
    */
   def hasEncoding(dimension: CarbonDimension, encoding: Encoding,
     excludeEncoding: Encoding): Boolean = {
@@ -157,8 +164,8 @@ object GlobalDictionaryUtil extends Logging {
   /**
    * invokes the CarbonDictionarySortIndexWriter to write column sort info
    * sortIndex and sortIndexInverted data to sortinsex file.
-    *
-    * @param model
+   *
+   * @param model
    * @param index
    */
   def writeGlobalDictionaryColumnSortInfo(model: DictionaryLoadModel, index: Int,
@@ -198,9 +205,8 @@ object GlobalDictionaryUtil extends Logging {
 
   /**
    * invoke CarbonDictionaryReader to read dictionary from files.
-   *
    * @param model
-   * @return: scala.Tuple2<scala.collection.mutable.HashSet<java.lang.String>[],boolean[]>
+   * @return
    */
   def readGlobalDictionaryFromFile(model: DictionaryLoadModel
   ): HashMap[String, HashSet[String]] = {
@@ -274,11 +280,12 @@ object GlobalDictionaryUtil extends Logging {
   /**
    * create a instance of DictionaryLoadModel
    *
-   * @param table CarbonTableIdentifier
-   * @param columnNames column list
-   * @param hdfsLocation store location in HDFS
-   * @param dictfolderPath path of dictionary folder
-   * @return: org.carbondata.integration.spark.rdd.DictionaryLoadModel
+   * @param carbonLoadModel
+   * @param table
+   * @param dimensions
+   * @param hdfsLocation
+   * @param dictfolderPath
+   * @return org.carbondata.integration.spark.rdd.DictionaryLoadModel
    */
   def createDictionaryLoadModel(carbonLoadModel: CarbonLoadModel,
                                 table: CarbonTableIdentifier,
@@ -348,10 +355,9 @@ object GlobalDictionaryUtil extends Logging {
 
   /**
    * load CSV files to DataFrame by using datasource "com.databricks.spark.csv"
-   *
-   * @param sqlContext SQLContext
-   * @param filePath file or directory path
-   * @return: org.apache.spark.sql.DataFrame
+   * @param sqlContext
+   * @param carbonLoadModel
+   * @return org.apache.spark.sql.DataFrame
    */
   private def loadDataFrame(sqlContext: SQLContext,
                             carbonLoadModel: CarbonLoadModel): DataFrame = {
@@ -369,10 +375,8 @@ object GlobalDictionaryUtil extends Logging {
   }
 
   /**
-   * check whether global dictionary have been generated successfully or not.
-   *
-   * @param status Array[(String, String)]
-   * @return: void
+   * check whether global dictionary have been generated successfully or not
+   * @param status
    */
   private def checkStatus(status: Array[(String, String)]) = {
     if (status.exists(x => CarbonCommonConstants.STORE_LOADSTATUS_FAILURE.equals(x._2))) {
@@ -443,7 +447,7 @@ object GlobalDictionaryUtil extends Logging {
                                                hdfsLocation: String,
                                                dictFolderPath: String) = {
     // get external dictionary column
-    val extColumns = getExternalColumnDictPath(colDictFilePath, table, dimensions
+    val extColumns = getExternalColumnDictPath(colDictFilePath, table, dimensions)
     val dictmodel = createDictionaryLoadModel(carbonLoadModel, table, extColumns._1,
       hdfsLocation, dictFolderPath)
     // new RDD to achieve distributed column dict generation
@@ -458,7 +462,6 @@ object GlobalDictionaryUtil extends Logging {
 
   /**
    * generate global dictionary with SQLContext and CarbonLoadModel
-   *
    * @param sqlContext
    * @param carbonLoadModel
    */
@@ -489,7 +492,7 @@ object GlobalDictionaryUtil extends Logging {
       val colDictFilePath = carbonLoadModel.getColDictFilePath
       var extDimensions: Option[Array[CarbonDimension]] = None
       if (colDictFilePath != null) {
-        // no use the data from fact table to generate global dict
+        // get the dimensions that have been used in external column dictionary
         extDimensions = Some(generateExternalColumnDictionary(colDictFilePath, table,
           dimensions, carbonLoadModel, sqlContext.sparkContext, hdfsLocation, dictfolderPath))
       }
