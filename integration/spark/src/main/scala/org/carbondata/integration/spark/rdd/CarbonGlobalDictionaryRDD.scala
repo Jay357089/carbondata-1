@@ -20,9 +20,10 @@ package org.carbondata.integration.spark.rdd
 import java.util.regex.Pattern
 
 import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
+import scala.io.Source
 
 import org.apache.commons.lang3.{ArrayUtils, StringUtils}
-import org.apache.spark.{Logging, Partition, Partitioner, TaskContext}
+import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
 
@@ -30,8 +31,9 @@ import org.carbondata.common.logging.LogServiceFactory
 import org.carbondata.core.carbon.CarbonTableIdentifier
 import org.carbondata.core.carbon.metadata.schema.table.column.CarbonDimension
 import org.carbondata.core.constants.CarbonCommonConstants
-import org.carbondata.integration.spark.load.CarbonLoaderUtil
+import org.carbondata.integration.spark.load.{CarbonLoadModel, CarbonLoaderUtil}
 import org.carbondata.integration.spark.util.{CarbonSparkInterFaceLogEvent, GlobalDictionaryUtil}
+import org.carbondata.integration.spark.util.GlobalDictionaryUtil._
 
 /**
  * A partitioner partition by column.
@@ -274,5 +276,84 @@ class CarbonGlobalDictionaryGenerateRDD(
       }
     }
     iter
+  }
+}
+
+/**
+ *  Set column dictionry patition format
+ * @param id
+ * @param dimension
+ * @param colPath
+ * @param colIndex
+ */
+class CarbonColumnDictPatition(id: Int, dimension: CarbonDimension, colPath: String, colIndex: Int)
+  extends Partition {
+  override val index: Int = id
+  val colDimension = dimension
+  val columnPath = colPath
+  // the start index for dimension columns to adapt for CarbonGlobalDictionaryGenerateRDD
+  val colStartIndex = colIndex
+}
+
+/**
+ * Use external column dict to generate global dictionary
+ * @param carbonLoadModel
+ * @param sparkContext
+ * @param dictColumnPaths
+ * @param table
+ * @param dimensions
+ * @param hdfsLocation
+ * @param dictFolderPath
+ */
+class CarbonColumnDictGenerateRDD(carbonLoadModel: CarbonLoadModel,
+                                  sparkContext: SparkContext,
+                                  dictColumnPaths: Array[String],
+                                  table: CarbonTableIdentifier,
+                                  dimensions: Array[CarbonDimension],
+                                  hdfsLocation: String,
+                                  dictFolderPath: String)
+  extends RDD[(Int, Array[String])](sparkContext, Nil) with Logging {
+
+  override def getPartitions: Array[Partition] = {
+    val extColumnlen = dictColumnPaths.length
+    val result = new Array[Partition](extColumnlen)
+    var primColStarIndex = 0
+    for (i <- 0 until extColumnlen) {
+      if (i > 0) {
+        val dimLen = getPrimDimensionWithDict(dimensions(i-1)).length
+        primColStarIndex += dimLen
+      }
+      result(i) = new CarbonColumnDictPatition(i, dimensions(i), dictColumnPaths(i), primColStarIndex)
+    }
+    result
+  }
+
+  override def compute(split: Partition, context: TaskContext): Iterator[(Int, Array[String])] = {
+    val theSplit = split.asInstanceOf[CarbonColumnDictPatition]
+    // read the column dict data
+    val colDict = Source.fromFile(theSplit.columnPath).getLines.toArray.flatMap(x => x.split(","))
+    val distinctValues = new ArrayBuffer[(Int, HashSet[String])]
+    val dictModel = createDictionaryLoadModel(carbonLoadModel, table, Array(theSplit.colDimension),
+      hdfsLocation, dictFolderPath)
+    // write new dict delta to the file
+    val mapIdWithSet = new HashMap[String, HashSet[String]]
+    val columnValues = new Array[HashSet[String]](dictModel.primDimensions.length)
+    for (i <- 0 until dictModel.primDimensions.length) {
+      columnValues(i) = new HashSet[String]
+      distinctValues += ((i + theSplit.colStartIndex, columnValues(i)))
+      mapIdWithSet.put(dictModel.primDimensions(i).getColumnId, columnValues(i))
+    }
+    // use parser to generate new dict value
+    val dimensionParser = generateParserForDimension(
+      Some(theSplit.colDimension),
+      createDataFormat(dictModel.delimiters),
+      mapIdWithSet).get
+    colDict.map(dimensionParser.parseString(_))
+
+    distinctValues.map { iter =>
+      val valueList = iter._2.toArray
+      java.util.Arrays.sort(valueList, Ordering[String])
+      (iter._1, valueList)
+    }.iterator
   }
 }
