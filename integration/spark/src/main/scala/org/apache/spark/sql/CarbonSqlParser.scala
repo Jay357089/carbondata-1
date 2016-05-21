@@ -69,6 +69,7 @@ class CarbonSqlParser()
   protected val DOUBLE = Keyword("DOUBLE")
   protected val DROP = Keyword("DROP")
   protected val ESCAPECHAR = Keyword("ESCAPECHAR")
+  protected val COLUMNDICT = Keyword("COLUMNDICT")
   protected val EXCLUDE = Keyword("EXCLUDE")
   protected val EXTENDED = Keyword("EXTENDED")
   protected val FORMATTED = Keyword("FORMATTED")
@@ -840,6 +841,7 @@ class CarbonSqlParser()
   protected lazy val partitionOptions: Parser[(String, String)] =
     ((DELIMITER ~ stringLit) | (QUOTECHAR ~ stringLit) | (FILEHEADER ~ stringLit) |
       (ESCAPECHAR ~ stringLit) | (MULTILINE ~ stringLit) |
+      (COLUMNDICT ~ stringLit) |
       (COMPLEX_DELIMITER_LEVEL_1 ~ stringLit) | (COMPLEX_DELIMITER_LEVEL_2 ~ stringLit)) ^^ {
       case opt ~ optvalue => (opt, optvalue)
       case _ => ("", "")
