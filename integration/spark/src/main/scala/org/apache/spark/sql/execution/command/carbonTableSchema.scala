@@ -1413,6 +1413,7 @@ private[sql] case class LoadCube(
       val fileHeader = partionValues.getOrElse("fileheader", "")
       val escapeChar = partionValues.getOrElse("escapechar", "")
       val multiLine = partionValues.getOrElse("multiline", false)
+      val columnDict = partionValues.getOrElse("columndict", null)
       val complex_delimiter_level_1 = partionValues.getOrElse("complex_delimiter_level_1", "\\$")
       val complex_delimiter_level_2 = partionValues.getOrElse("complex_delimiter_level_2", "\\:")
       var booleanValForMultiLine = false
@@ -1442,6 +1443,7 @@ private[sql] case class LoadCube(
           carbonLoadModel.setFactFilePath(factPath)
           carbonLoadModel.setCsvDelimiter(CarbonUtil.unescapeChar(delimiter))
           carbonLoadModel.setCsvHeader(fileHeader)
+          carbonLoadModel.setColDictFilePath(columnDict)
           carbonLoadModel.setDirectLoad(true)
         }
         else {
@@ -1455,6 +1457,7 @@ private[sql] case class LoadCube(
           LOGGER.info("Initiating Data Partitioning for the Cube : (" +
                       schemaName + "." + tableName + ")")
           carbonLoadModel.setFactFilePath(partitionLocation)
+          carbonLoadModel.setColDictFilePath(columnDict)
           partitionStatus = CarbonContext.partitionData(
             schemaName,
             tableName,
