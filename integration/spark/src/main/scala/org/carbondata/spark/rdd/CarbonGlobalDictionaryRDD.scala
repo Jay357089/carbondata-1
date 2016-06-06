@@ -17,6 +17,8 @@
 
 package org.carbondata.spark.rdd
 
+import java.io.InputStreamReader
+import java.nio.charset.Charset
 import java.util.regex.Pattern
 
 import scala.collection.mutable
@@ -24,7 +26,7 @@ import scala.collection.mutable.{ArrayBuffer, HashMap, HashSet}
 import scala.util.control.Breaks.{break, breakable}
 
 import org.apache.commons.lang3.{ArrayUtils, StringUtils}
-import org.apache.spark.{Logging, Partition, Partitioner, TaskContext}
+import org.apache.spark._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.sql.Row
 
@@ -32,8 +34,11 @@ import org.carbondata.common.logging.LogServiceFactory
 import org.carbondata.core.carbon.CarbonTableIdentifier
 import org.carbondata.core.carbon.metadata.schema.table.column.CarbonDimension
 import org.carbondata.core.constants.CarbonCommonConstants
-import org.carbondata.spark.load.CarbonLoaderUtil
+import org.carbondata.core.datastorage.store.impl.FileFactory
+import org.carbondata.spark.load.{CarbonLoaderUtil, CarbonLoadModel}
+import org.carbondata.spark.partition.reader.{CSVParser, CSVReader}
 import org.carbondata.spark.util.GlobalDictionaryUtil
+import org.carbondata.spark.util.GlobalDictionaryUtil._
 
 /**
  * A partitioner partition by column.
@@ -307,5 +312,93 @@ class CarbonGlobalDictionaryGenerateRDD(
       }
     }
     iter
+  }
+}
+
+/**
+ *  Set column dictionry patition format
+ * @param id
+ * @param dimension
+ * @param colPath
+ * @param colIndex
+ */
+class CarbonColumnDictPatition(id: Int, dimension: CarbonDimension, colPath: String, colIndex: Int)
+  extends Partition {
+  override val index: Int = id
+  val colDimension = dimension
+  val columnPath = colPath
+  // the start index for dimension columns to adapt for CarbonGlobalDictionaryGenerateRDD
+  val colStartIndex = colIndex
+}
+
+/**
+ * Use external column dict to generate global dictionary
+ * @param carbonLoadModel
+ * @param sparkContext
+ * @param dictColumnPaths
+ * @param table
+ * @param dimensions
+ * @param hdfsLocation
+ * @param dictFolderPath
+ */
+class CarbonColumnDictGenerateRDD(carbonLoadModel: CarbonLoadModel,
+                                  sparkContext: SparkContext,
+                                  dictColumnPaths: Array[String],
+                                  table: CarbonTableIdentifier,
+                                  dimensions: Array[CarbonDimension],
+                                  hdfsLocation: String,
+                                  dictFolderPath: String)
+  extends RDD[(Int, ColumnDistinctValues)](sparkContext, Nil) with Logging {
+
+  override def getPartitions: Array[Partition] = {
+    val extColumnlen = dictColumnPaths.length
+    val result = new Array[Partition](extColumnlen)
+    var primColStarIndex = 0
+    for (i <- 0 until extColumnlen) {
+      if (i > 0) {
+        val dimLen = GlobalDictionaryUtil.getPrimDimensionWithDict(dimensions(i-1)).length
+        primColStarIndex += dimLen
+      }
+      result(i) = new CarbonColumnDictPatition(i, dimensions(i), dictColumnPaths(i),
+        primColStarIndex)
+    }
+    result
+  }
+
+  override def compute(split: Partition, context: TaskContext)
+  : Iterator[(Int, ColumnDistinctValues)] = {
+    val theSplit = split.asInstanceOf[CarbonColumnDictPatition]
+    // read the column dict data
+    val inputStream = FileFactory.getDataInputStream(theSplit.columnPath,
+      FileFactory.getFileType(theSplit.columnPath))
+    val csvReader = new CSVReader(new InputStreamReader(inputStream, Charset.defaultCharset),
+      CSVReader.DEFAULT_SKIP_LINES, new CSVParser())
+    // read the column data to list
+    val colDict = csvReader.readAll.iterator
+    val distinctValues = new ArrayBuffer[(Int, HashSet[String])]
+    val dictModel = GlobalDictionaryUtil.
+      createDictionaryLoadModel(carbonLoadModel, table, Array(theSplit.colDimension),
+      hdfsLocation, dictFolderPath)
+    val mapIdWithSet = new HashMap[String, HashSet[String]]
+    val columnValues = new Array[HashSet[String]](dictModel.primDimensions.length)
+    for (i <- 0 until dictModel.primDimensions.length) {
+      columnValues(i) = new HashSet[String]
+      distinctValues += ((i + theSplit.colStartIndex, columnValues(i)))
+      mapIdWithSet.put(dictModel.primDimensions(i).getColumnId, columnValues(i))
+    }
+    // use parser to generate new dict value
+    val dimensionParser = GlobalDictionaryUtil.generateParserForDimension(
+      Some(theSplit.colDimension),
+      createDataFormat(dictModel.delimiters),
+      mapIdWithSet).get
+    var rowCount = 0L
+    // parse the column data
+    while (colDict.hasNext) {
+      rowCount += 1
+      dimensionParser.parseString(colDict.next()(0))
+    }
+    distinctValues.map { iter =>
+      (iter._1,  ColumnDistinctValues(iter._2.toArray, rowCount))
+    }.iterator
   }
 }
