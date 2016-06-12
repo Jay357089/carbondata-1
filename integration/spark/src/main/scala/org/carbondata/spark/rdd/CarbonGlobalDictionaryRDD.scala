@@ -329,7 +329,7 @@ class CarbonGlobalDictionaryGenerateRDD(
 /**
  *  Set column dictionry patition format
  * @param id  partition id
- * @param dimension  current carbon Dimenison
+ * @param dimension  current carbon dimension
  * @param colPath  pre-defined dict file path
  * @param colIndex  primitive column start index
  */
