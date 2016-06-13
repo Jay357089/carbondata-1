@@ -42,6 +42,8 @@ public class CarbonLoadModel implements Serializable {
 
   private String dimFolderPath;
 
+  private String colDictFilePath;
+
   private String partitionId;
 
   private CarbonDataLoadSchema carbonDataLoadSchema;
@@ -200,6 +202,22 @@ public class CarbonLoadModel implements Serializable {
    */
   public void setFactFilePath(String factFilePath) {
     this.factFilePath = factFilePath;
+  }
+
+  /**
+   *
+   * @return external column dictionary file path
+   */
+  public String getColDictFilePath() {
+    return colDictFilePath;
+  }
+
+  /**
+   * set external column dictionary file path
+   * @param colDictFilePath
+   */
+  public void setColDictFilePath(String colDictFilePath) {
+    this.colDictFilePath = colDictFilePath;
   }
 
   /**
