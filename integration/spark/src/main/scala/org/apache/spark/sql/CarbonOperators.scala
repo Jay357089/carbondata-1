@@ -21,6 +21,7 @@ import java.util.ArrayList
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.ArrayBuffer
+import scala.util.control.Breaks.{break, breakable}
 
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.mapreduce.Job
@@ -263,8 +264,14 @@ case class CarbonTableScan(
     // Unknown aggregates & Expressions will use custom aggregator
     aggExprs match {
       case Some(a: Seq[Expression]) if !forceDetailedQuery =>
-        a.foreach {
-          case attr@AttributeReference(_, _, _, _) => // Add all the references to carbon query
+        a.foreach { x => x match {
+          case AttributeReference(_, _, _, _) | Alias(_, _)
+            if (x.isInstanceOf[AttributeReference] || findExpression[Substring](x).nonEmpty) =>
+            // Add all the references to carbon query
+            val attr =
+              if (x.isInstanceOf[Alias]) {
+                findExpression[AttributeReference](a.asInstanceOf[Alias]).get
+              } else a.asInstanceOf[AttributeReference]
             val carbonDimension = selectedDims
               .filter(m => m.getColumnName.equalsIgnoreCase(attr.name))
             if (carbonDimension.nonEmpty) {
@@ -287,7 +294,7 @@ case class CarbonTableScan(
                 // So, let's fall back to detailed query flow
                 throw new Exception(
                   "Some attributes referred looks derived columns. So, force to detailequery " +
-                  attr.name)
+                    attr.name)
               }
             }
             outputColumns += attr
@@ -297,6 +304,7 @@ case class CarbonTableScan(
               par.children.head.asInstanceOf[AggregateExpression1], queryOrder)
 
           case _ => forceDetailedQuery = true
+          }
         }
       case _ => forceDetailedQuery = true
     }
@@ -559,6 +567,22 @@ case class CarbonTableScan(
 
   def output: Seq[Attribute] = {
     attributes
+  }
+
+  def findExpression[T](exp: Expression): Option[T] = {
+    var expression: Option[T] = None
+    breakable {
+      exp.children.foreach { child =>
+        expression = {
+          if (child.isInstanceOf[T]) {
+            Some(child.asInstanceOf[T])
+          }
+          else findExpression[T](child)
+        }
+        if (expression.nonEmpty) break
+      }
+    }
+    expression
   }
 
 }
