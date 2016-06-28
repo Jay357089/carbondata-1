@@ -155,20 +155,6 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
       .asInstanceOf[CarbonRelation]
   }
 
-  def checkDictionary(relation: CarbonRelation, columnName: String, value: String) {
-    val table = relation.cubeMeta.carbonTable
-    val dimension = table.getDimensionByName(table.getFactTableName, columnName)
-    val tableIdentifier = new CarbonTableIdentifier(table.getDatabaseName, table.getFactTableName, "uniqueid")
-
-    val dictColumnIdentifier = new DictionaryColumnUniqueIdentifier(tableIdentifier,
-      dimension.getColumnIdentifier, dimension.getDataType
-    )
-    val dict = CarbonLoaderUtil.getDictionary(dictColumnIdentifier,
-      CarbonHiveContext.hdfsCarbonBasePath
-    )
-    assert(dict.getSurrogateKey(value) != CarbonCommonConstants.INVALID_SURROGATE_KEY)
-  }
-
   test("[issue-80]Global Dictionary Generation") {
 
     var carbonLoadModel = buildCarbonLoadModel(sampleRelation, filePath, null, null)
@@ -211,7 +197,8 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
         carbonLoadModel,
         sampleRelation.cubeMeta.storePath
       )
-    checkDictionary(incrementalLoadTableRelation, "deviceInformationId", "100010")
+    DictionaryTestCaseUtil.checkDictionary(
+      incrementalLoadTableRelation, "deviceInformationId", "100010")
 
     // load 2
     carbonLoadModel = buildCarbonLoadModel(incrementalLoadTableRelation,
@@ -224,7 +211,8 @@ class GlobalDictionaryUtilTestCase extends QueryTest with BeforeAndAfterAll {
         carbonLoadModel,
         sampleRelation.cubeMeta.storePath
       )
-    checkDictionary(incrementalLoadTableRelation, "deviceInformationId", "100077")
+    DictionaryTestCaseUtil.checkDictionary(
+      incrementalLoadTableRelation, "deviceInformationId", "100077")
   }
 
 }
