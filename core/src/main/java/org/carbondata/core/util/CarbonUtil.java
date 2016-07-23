@@ -1226,6 +1226,12 @@ public final class CarbonUtil {
       case "\\n":
         return "\n";
       default:
+        if (parseStr.length() == 2) {
+          char[] delimiter = parseStr.toCharArray();
+          if (delimiter[0] == '\\' && delimiter[1] == '\"') {
+            return String.valueOf(delimiter[1]);
+          }
+        }
         return parseStr;
     }
   }
