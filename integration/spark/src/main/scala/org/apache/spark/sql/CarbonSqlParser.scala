@@ -496,8 +496,15 @@ class CarbonSqlParser()
                                   tableProperties: Map[String, String]): tableModel
   = {
 
-    var (dims: Seq[Field], noDictionaryDims: Seq[String]) = extractDimColsAndNoDictionaryFields(
+    val (dims: Seq[Field], noDictionaryDims: Seq[String]) = extractDimColsAndNoDictionaryFields(
       fields, tableProperties)
+    if (dims.length == 0) {
+      throw new MalformedCarbonCommandException(s"Table ${dbName.getOrElse(
+        CarbonCommonConstants.DATABASE_DEFAULT_NAME)}.$tableName"
+        + " can not be created without key columns. Please use DICTIONARY_INCLUDE or " +
+        "DICTIONARY_EXCLUDE to set at least one key column " +
+        "if all specified columns are numeric types")
+    }
     val msrs: Seq[Field] = extractMsrColsFromFields(fields, tableProperties)
 
     // column properties
